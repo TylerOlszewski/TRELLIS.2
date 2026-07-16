@@ -27,8 +27,8 @@ single **textured GLB + turntable video**, using this fork's
 
 1. Click the **Open in Colab** badge above.
 2. Select the A100 GPU **and 2025.10 runtime**, then run the cells top to bottom.
-3. **First session only:** cell 6 downloads the matching official FlashAttention wheel, then
-   compiles nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, and o-voxel at pinned revisions. Each wheel
+3. **First session only:** cell 6 downloads the matching official FlashAttention wheel, installs
+   Eigen headers, then compiles nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, and o-voxel at pinned revisions. Each wheel
    is cached immediately to `Drive/TRELLIS2_cache/wheels/`; rerunning after a disconnect resumes
    from the remaining package. Later sessions install the cache in a few minutes.
 4. In cell 8, upload **2–4 views of the same object** (or point `DRIVE_FOLDER` at a folder of
