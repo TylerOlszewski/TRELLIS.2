@@ -19,6 +19,8 @@ single **textured GLB + turntable video**, using this fork's
 3. **HF token in Colab Secrets** — create a *read* token at
    [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), then in Colab open
    the **key icon** in the left sidebar and add it as `HF_TOKEN` (enable notebook access).
+   The authentication cell prints the Hugging Face username and verifies file access to both
+   gated models before loading the pipeline.
 4. **Google Drive** with a few GB free — compiled CUDA wheels are cached there so you only pay
    the typical ~15–40 min build once. (Model weights ~15 GB are re-downloaded per session by default;
    flip `CACHE_MODELS_ON_DRIVE` in cell 2 if you'd rather keep them on Drive too.)
