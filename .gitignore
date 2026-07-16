@@ -201,6 +201,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Optional local checkout used by the Colab PartSAM integration. The notebook
+# clones a pinned upstream revision separately, so this external repo is not vendored.
+/PartSAM/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

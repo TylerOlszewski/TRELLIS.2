@@ -23,8 +23,12 @@ view predictions at each step (`multidiffusion`).
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
 
 The [A100 Colab guide](notebooks/README.md) covers the pinned runtime, Hugging Face access,
-compiled-extension caching, inputs, outputs, and troubleshooting. For an existing CUDA setup,
-use the CLI directly:
+compiled-extension caching, inputs, outputs, and troubleshooting. It also includes an optional
+[PartSAM](https://github.com/czvvd/PartSAM) post-process that exports a color-highlighted part
+mesh and JSON legend while preserving the original textured GLB. PartSAM discovers unlabeled
+part regions; it does not automatically name them as doors, windows, headlights, and so on.
+
+For an existing CUDA setup, use the CLI directly:
 
 ```sh
 python example_multi_image.py front.png side.png back.png \

@@ -3,8 +3,10 @@
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
 
 Turn **multiple photos of the same object** (different angles, no camera poses needed) into a
-single **textured GLB + turntable video**, using this fork's
+**textured GLB + turntable video**, using this fork's
 [`run_multi_image()`](../trellis2/pipelines/trellis2_image_to_3d.py) pipeline on a Colab A100.
+The notebook can then run [PartSAM](https://github.com/czvvd/PartSAM) to produce a second GLB
+whose discovered parts are highlighted with distinct colors.
 
 ## Prerequisites
 
@@ -32,12 +34,35 @@ single **textured GLB + turntable video**, using this fork's
 3. **First session only:** cell 6 downloads the matching official FlashAttention wheel, installs
    Eigen headers, then compiles nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, and o-voxel at pinned revisions. Each wheel
    is cached immediately to `Drive/TRELLIS2_cache/wheels/`; rerunning after a disconnect resumes
-   from the remaining package. Later sessions install the cache in a few minutes.
+   from the remaining package. Cell 7a also builds PartSAM's pinned `torkit3d` dependency when
+   `RUN_PARTSAM` is enabled; if that optional build fails, the integration uses a slower
+   pure-PyTorch fallback. Later sessions install successful builds from the cache in a few minutes.
 4. In cell 8, upload **2–4 views of the same object** (or point `DRIVE_FOLDER` at a folder of
    images on your Drive).
 5. Run cells 9–12: the pipeline loads once, generates the mesh, renders a turntable preview
    inline, and exports `trellis2_multiview.glb`. Results are also copied to
    `Drive/TRELLIS2_outputs/`.
+6. Run cell 13 to export `trellis2_multiview_parts.glb`, a PLY copy, and a JSON color legend.
+
+## Part highlighting with PartSAM
+
+PartSAM's `every-part` inference discovers coherent part instances from the generated 3D
+surface. On a well-reconstructed car, those regions can correspond to doors, windows, hood,
+headlights, mirrors, wheels, and body panels. However, PartSAM is **not a semantic classifier**:
+it does not know that a particular region is a door or headlight. The generated legend therefore
+records stable part IDs, colors, face counts, and coverage—not component names.
+
+The original one-million-face textured asset is never modified. Cell 13 performs inference from
+that textured GLB and exports a separate color visualization capped at 100,000 faces so PartSAM's
+mesh smoothing remains practical in Colab.
+
+| Parameter | Default | Effect |
+|---|---:|---|
+| `PARTSAM_PROMPTS` | `512` | Number of automatic point prompts. Raise to `768` to search for smaller parts; inference takes longer and may over-segment. |
+| `PARTSAM_IOU_THRESHOLD` | `0.65` | Minimum predicted mask score. Lower to `0.55` if no masks survive. |
+| `PARTSAM_NMS_THRESHOLD` | `0.30` | Suppresses overlapping masks. Lower values keep fewer competing regions; higher values can retain more overlaps. |
+| `PARTSAM_MIN_PART_FRACTION` | `0.002` | Removes very small noisy islands. Lower to `0.001` if mirrors or headlights disappear. |
+| `PARTSAM_FACE_TARGET` | `100000` | Face count of the highlighted visualization only. It does not reduce the original textured GLB. |
 
 ## Generation options (cell 10)
 
@@ -62,7 +87,7 @@ single **textured GLB + turntable video**, using this fork's
 |---|---|---|
 | `Drive/TRELLIS2_cache/wheels/` | CUDA extension wheels + `env_tag.txt` | Yes — next run rebuilds them. Auto-cleared when the torch/CUDA/Python ABI changes. |
 | `Drive/TRELLIS2_cache/hf_home/` | model weights (only if `CACHE_MODELS_ON_DRIVE`) | Yes — re-downloaded on demand. |
-| `Drive/TRELLIS2_outputs/` | your generated GLB/MP4 files | Your call. |
+| `Drive/TRELLIS2_outputs/` | textured GLB/MP4 plus PartSAM GLB/PLY/legend outputs | Your call. |
 
 ## Troubleshooting
 
@@ -75,6 +100,8 @@ See the table in the notebook's final cell. The two big ones:
   wheel-cache tag.
 - **401/403 downloading models**: you haven't accepted the gated-model licenses, or the
   `HF_TOKEN` secret is missing/not shared with the notebook.
+- **PartSAM finds no masks**: lower `PARTSAM_IOU_THRESHOLD` to `0.55`. If small car parts merge,
+  try more prompts and a smaller minimum-part fraction; both can also create noisy regions.
 
 ## Running outside Colab
 
@@ -88,8 +115,8 @@ python example_multi_image.py front.png side.png back.png -o outputs --mode stoc
 
 ## Reproducibility notes
 
-- The notebook pins the Colab runtime contract, FlashAttention 2.8.3 wheel, utils3d commit, and
-  source revisions for every compiled third-party extension.
+- The notebook pins the Colab runtime contract, FlashAttention 2.8.3 wheel, utils3d commit,
+  PartSAM code/checkpoint, and source revisions for every compiled third-party extension.
 - Cached wheels are accepted only when PyTorch, its CUDA runtime, nvcc, Python, C++ ABI, and GPU
   architecture match the cache tag.
 - Colab keeps past runtime versions available for a limited period. If 2025.10 is removed from
