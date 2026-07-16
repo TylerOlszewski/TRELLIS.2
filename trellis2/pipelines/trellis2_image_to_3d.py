@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 from .base import Pipeline
 from . import samplers, rembg
+from .multi_image import inject_multi_image_conditioning
 from ..modules.sparse import SparseTensor
 from ..modules import image_feature_extractor
 from ..representations import Mesh, MeshWithVoxel
@@ -485,6 +486,29 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             )
         return out_mesh
     
+    def _check_pipeline_type(self, pipeline_type: Optional[str]) -> str:
+        """
+        Validate the pipeline type and check that the required models are loaded.
+        """
+        pipeline_type = pipeline_type or self.default_pipeline_type
+        if pipeline_type == '512':
+            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
+            assert 'tex_slat_flow_model_512' in self.models, "No 512 resolution texture SLat flow model found."
+        elif pipeline_type == '1024':
+            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
+            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
+        elif pipeline_type == '1024_cascade':
+            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
+            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
+            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
+        elif pipeline_type == '1536_cascade':
+            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
+            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
+            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
+        else:
+            raise ValueError(f"Invalid pipeline type: {pipeline_type}")
+        return pipeline_type
+
     @torch.no_grad()
     def run(
         self,
@@ -514,25 +538,8 @@ class Trellis2ImageTo3DPipeline(Pipeline):
             pipeline_type (str): The type of the pipeline. Options: '512', '1024', '1024_cascade', '1536_cascade'.
             max_num_tokens (int): The maximum number of tokens to use.
         """
-        # Check pipeline type
-        pipeline_type = pipeline_type or self.default_pipeline_type
-        if pipeline_type == '512':
-            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
-            assert 'tex_slat_flow_model_512' in self.models, "No 512 resolution texture SLat flow model found."
-        elif pipeline_type == '1024':
-            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
-            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
-        elif pipeline_type == '1024_cascade':
-            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
-            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
-            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
-        elif pipeline_type == '1536_cascade':
-            assert 'shape_slat_flow_model_512' in self.models, "No 512 resolution shape SLat flow model found."
-            assert 'shape_slat_flow_model_1024' in self.models, "No 1024 resolution shape SLat flow model found."
-            assert 'tex_slat_flow_model_1024' in self.models, "No 1024 resolution texture SLat flow model found."
-        else:
-            raise ValueError(f"Invalid pipeline type: {pipeline_type}")
-        
+        pipeline_type = self._check_pipeline_type(pipeline_type)
+
         if preprocess_image:
             image = self.preprocess_image(image)
         torch.manual_seed(seed)
@@ -587,6 +594,122 @@ class Trellis2ImageTo3DPipeline(Pipeline):
                 cond_1024, self.models['tex_slat_flow_model_1024'],
                 shape_slat, tex_slat_sampler_params
             )
+        torch.cuda.empty_cache()
+        out_mesh = self.decode_latent(shape_slat, tex_slat, res)
+        if return_latent:
+            return out_mesh, (shape_slat, tex_slat, res)
+        else:
+            return out_mesh
+
+    @torch.no_grad()
+    def run_multi_image(
+        self,
+        images: List[Image.Image],
+        num_samples: int = 1,
+        seed: int = 42,
+        sparse_structure_sampler_params: dict = {},
+        shape_slat_sampler_params: dict = {},
+        tex_slat_sampler_params: dict = {},
+        preprocess_image: bool = True,
+        return_latent: bool = False,
+        pipeline_type: Optional[str] = None,
+        max_num_tokens: int = 49152,
+        mode: Literal['stochastic', 'multidiffusion'] = 'stochastic',
+    ) -> List[MeshWithVoxel]:
+        """
+        Run the pipeline with multiple images of the same object as condition.
+
+        Args:
+            images (List[Image.Image]): Image prompts showing the same object from different views.
+            num_samples (int): The number of samples to generate.
+            seed (int): The random seed.
+            sparse_structure_sampler_params (dict): Additional parameters for the sparse structure sampler.
+            shape_slat_sampler_params (dict): Additional parameters for the shape SLat sampler.
+            tex_slat_sampler_params (dict): Additional parameters for the texture SLat sampler.
+            preprocess_image (bool): Whether to preprocess the images.
+            return_latent (bool): Whether to return the latent codes.
+            pipeline_type (str): The type of the pipeline. Options: '512', '1024', '1024_cascade', '1536_cascade'.
+            max_num_tokens (int): The maximum number of tokens to use.
+            mode (str): How to aggregate the image conditions.
+                - 'stochastic': condition on a different image at each denoising step (fast).
+                - 'multidiffusion': average the flow predictions of all images at every step (slower, more stable).
+        """
+        assert len(images) > 0, "At least one image is required."
+        pipeline_type = self._check_pipeline_type(pipeline_type)
+        num_images = len(images)
+
+        if preprocess_image:
+            images = [self.preprocess_image(image) for image in images]
+        torch.manual_seed(seed)
+        cond_512 = self.get_cond(images, 512)
+        cond_512['neg_cond'] = cond_512['neg_cond'][:1]
+        cond_1024 = None
+        if pipeline_type != '512':
+            cond_1024 = self.get_cond(images, 1024)
+            cond_1024['neg_cond'] = cond_1024['neg_cond'][:1]
+
+        ss_steps = {**self.sparse_structure_sampler_params, **sparse_structure_sampler_params}.get('steps')
+        shape_steps = {**self.shape_slat_sampler_params, **shape_slat_sampler_params}.get('steps')
+        tex_steps = {**self.tex_slat_sampler_params, **tex_slat_sampler_params}.get('steps')
+
+        ss_res = {'512': 32, '1024': 64, '1024_cascade': 32, '1536_cascade': 32}[pipeline_type]
+        with inject_multi_image_conditioning(self.sparse_structure_sampler, num_images, ss_steps, mode=mode):
+            coords = self.sample_sparse_structure(
+                cond_512, ss_res,
+                num_samples, sparse_structure_sampler_params
+            )
+        if pipeline_type == '512':
+            with inject_multi_image_conditioning(self.shape_slat_sampler, num_images, shape_steps, mode=mode):
+                shape_slat = self.sample_shape_slat(
+                    cond_512, self.models['shape_slat_flow_model_512'],
+                    coords, shape_slat_sampler_params
+                )
+            with inject_multi_image_conditioning(self.tex_slat_sampler, num_images, tex_steps, mode=mode):
+                tex_slat = self.sample_tex_slat(
+                    cond_512, self.models['tex_slat_flow_model_512'],
+                    shape_slat, tex_slat_sampler_params
+                )
+            res = 512
+        elif pipeline_type == '1024':
+            with inject_multi_image_conditioning(self.shape_slat_sampler, num_images, shape_steps, mode=mode):
+                shape_slat = self.sample_shape_slat(
+                    cond_1024, self.models['shape_slat_flow_model_1024'],
+                    coords, shape_slat_sampler_params
+                )
+            with inject_multi_image_conditioning(self.tex_slat_sampler, num_images, tex_steps, mode=mode):
+                tex_slat = self.sample_tex_slat(
+                    cond_1024, self.models['tex_slat_flow_model_1024'],
+                    shape_slat, tex_slat_sampler_params
+                )
+            res = 1024
+        elif pipeline_type == '1024_cascade':
+            with inject_multi_image_conditioning(self.shape_slat_sampler, num_images, shape_steps, mode=mode):
+                shape_slat, res = self.sample_shape_slat_cascade(
+                    cond_512, cond_1024,
+                    self.models['shape_slat_flow_model_512'], self.models['shape_slat_flow_model_1024'],
+                    512, 1024,
+                    coords, shape_slat_sampler_params,
+                    max_num_tokens
+                )
+            with inject_multi_image_conditioning(self.tex_slat_sampler, num_images, tex_steps, mode=mode):
+                tex_slat = self.sample_tex_slat(
+                    cond_1024, self.models['tex_slat_flow_model_1024'],
+                    shape_slat, tex_slat_sampler_params
+                )
+        elif pipeline_type == '1536_cascade':
+            with inject_multi_image_conditioning(self.shape_slat_sampler, num_images, shape_steps, mode=mode):
+                shape_slat, res = self.sample_shape_slat_cascade(
+                    cond_512, cond_1024,
+                    self.models['shape_slat_flow_model_512'], self.models['shape_slat_flow_model_1024'],
+                    512, 1536,
+                    coords, shape_slat_sampler_params,
+                    max_num_tokens
+                )
+            with inject_multi_image_conditioning(self.tex_slat_sampler, num_images, tex_steps, mode=mode):
+                tex_slat = self.sample_tex_slat(
+                    cond_1024, self.models['tex_slat_flow_model_1024'],
+                    shape_slat, tex_slat_sampler_params
+                )
         torch.cuda.empty_cache()
         out_mesh = self.decode_latent(shape_slat, tex_slat, res)
         if return_latent:
