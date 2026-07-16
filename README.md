@@ -14,6 +14,26 @@ https://github.com/user-attachments/assets/63b43a7e-acc7-4c81-a900-6da450527d8f
 
 **TRELLIS.2** is a state-of-the-art large 3D generative model (4B parameters) designed for high-fidelity **image-to-3D** generation. It leverages a novel "field-free" sparse voxel structure termed **O-Voxel** to reconstruct and generate arbitrary 3D assets with complex topologies, sharp features, and full PBR materials.
 
+## 🖼️ Fork addition: Multi-image generation
+
+This fork adds pose-free conditioning from multiple views of the same object. It produces one
+textured asset by either cycling through views during denoising (`stochastic`) or averaging all
+view predictions at each step (`multidiffusion`).
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
+
+The [A100 Colab guide](notebooks/README.md) covers the pinned runtime, Hugging Face access,
+compiled-extension caching, inputs, outputs, and troubleshooting. For an existing CUDA setup,
+use the CLI directly:
+
+```sh
+python example_multi_image.py front.png side.png back.png \
+  --output-dir outputs_multi_image \
+  --mode stochastic
+```
+
+Both paths call `Trellis2ImageTo3DPipeline.run_multi_image()`; no camera poses are required.
+
 
 ## ✨ Features
 
