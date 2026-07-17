@@ -25,8 +25,10 @@ view predictions at each step (`multidiffusion`).
 The [A100 Colab guide](notebooks/README.md) covers the pinned runtime, Hugging Face access,
 compiled-extension caching, inputs, outputs, and troubleshooting. It also includes an optional
 [PartSAM](https://github.com/czvvd/PartSAM) post-process that exports a color-highlighted part
-mesh and JSON legend while preserving the original textured GLB. PartSAM discovers unlabeled
-part regions; it does not automatically name them as doors, windows, headlights, and so on.
+mesh and JSON legend while preserving the original textured GLB. Its cleaner default preset runs
+segmentation on a decimated, topology-cleaned, mildly smoothed proxy to reduce fragmented panels.
+PartSAM discovers unlabeled part regions; it does not automatically name them as doors, windows,
+headlights, and so on.
 
 For an existing CUDA setup, use the CLI directly:
 

@@ -52,17 +52,27 @@ headlights, mirrors, wheels, and body panels. However, PartSAM is **not a semant
 it does not know that a particular region is a door or headlight. The generated legend therefore
 records stable part IDs, colors, face counts, and coverage—not component names.
 
-The original one-million-face textured asset is never modified. Cell 13 performs inference from
-that textured GLB and exports a separate color visualization capped at 100,000 faces so PartSAM's
-mesh smoothing remains practical in Colab.
+The original one-million-face textured asset is never modified. Cell 13 builds a separate,
+cleaned 75,000-face proxy, applies four mild Taubin-smoothing passes, transfers samples of the
+original texture onto that proxy, and runs PartSAM on the smoother coordinates and normals. The
+highlighted GLB is this proxy restored to the original model's scale and position.
 
 | Parameter | Default | Effect |
 |---|---:|---|
-| `PARTSAM_PROMPTS` | `512` | Number of automatic point prompts. Raise to `768` to search for smaller parts; inference takes longer and may over-segment. |
-| `PARTSAM_IOU_THRESHOLD` | `0.65` | Minimum predicted mask score. Lower to `0.55` if no masks survive. |
-| `PARTSAM_NMS_THRESHOLD` | `0.30` | Suppresses overlapping masks. Lower values keep fewer competing regions; higher values can retain more overlaps. |
-| `PARTSAM_MIN_PART_FRACTION` | `0.002` | Removes very small noisy islands. Lower to `0.001` if mirrors or headlights disappear. |
-| `PARTSAM_FACE_TARGET` | `100000` | Face count of the highlighted visualization only. It does not reduce the original textured GLB. |
+| `PARTSAM_PROMPTS` | `256` | Number of automatic point prompts. Fewer prompts reduce competing tiny masks; raise it only when small components are consistently missed. |
+| `PARTSAM_IOU_THRESHOLD` | `0.75` | Minimum predicted mask score. Lower to `0.65` if no masks survive. |
+| `PARTSAM_NMS_THRESHOLD` | `0.15` | Suppresses overlapping masks. This conservative value keeps fewer competing regions; raise it when legitimate parts disappear. |
+| `PARTSAM_MIN_PART_FRACTION` | `0.01` | Removes tiny noisy islands. Lower to `0.005` if mirrors or headlights disappear. |
+| `PARTSAM_FACE_TARGET` | `75000` | Face count of the highlighted proxy only. It does not reduce the original textured GLB. |
+| `PARTSAM_FACE_NEIGHBORS` | `7` | Number of nearby sampled labels voted onto each proxy face. Raise to `9` for more spatially coherent panels. |
+| `PARTSAM_SMOOTH_ITERATIONS` | `4` | Mild Taubin-smoothing passes before inference. Set to `0` to disable, or `2` if narrow panels start merging. |
+| `PARTSAM_SMOOTH_LAMBDA` / `PARTSAM_SMOOTH_NU` | `0.5` / `0.5` | Taubin smoothing strengths. The defaults smooth faceting without intentionally shrinking the proxy. |
+| `PARTSAM_GRAPH_CUT` | `False` | Enables PartSAM's slower boundary refinement. If enabled, set `PARTSAM_FACE_TARGET` to `50000` or less (`40000` is a good first try). |
+
+Cell 12 now defaults to `EXPORT_REMESH=False`. That selects O-Voxel's standard export path,
+which removes duplicate faces, repairs non-manifold edges, drops small connected components,
+fills small holes, and unifies face orientation. Set it to `True` only to test O-Voxel's
+narrow-band dual-contouring remesher; this changes topology and can soften sharp details.
 
 ## Generation options (cell 10)
 
@@ -100,8 +110,11 @@ See the table in the notebook's final cell. The two big ones:
   wheel-cache tag.
 - **401/403 downloading models**: you haven't accepted the gated-model licenses, or the
   `HF_TOKEN` secret is missing/not shared with the notebook.
-- **PartSAM finds no masks**: lower `PARTSAM_IOU_THRESHOLD` to `0.55`. If small car parts merge,
-  try more prompts and a smaller minimum-part fraction; both can also create noisy regions.
+- **PartSAM finds no masks**: lower `PARTSAM_IOU_THRESHOLD` from `0.75` to `0.65`.
+- **Part segmentation is still fragmented**: try `PARTSAM_FACE_NEIGHBORS=9`; if necessary, set
+  `PARTSAM_GRAPH_CUT=True` and `PARTSAM_FACE_TARGET=40000`.
+- **Small panels merge**: use two smoothing iterations, lower `PARTSAM_MIN_PART_FRACTION` to
+  `0.005`, or raise `PARTSAM_NMS_THRESHOLD` to `0.25`.
 
 ## Running outside Colab
 

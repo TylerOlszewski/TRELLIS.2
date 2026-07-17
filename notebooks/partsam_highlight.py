@@ -2,8 +2,8 @@
 
 PartSAM discovers part instances; it does not assign semantic names such as
 "door" or "headlight". This wrapper keeps the original TRELLIS asset intact,
-colors each discovered part on a decimated visualization copy, and writes a
-JSON legend containing stable part IDs, colors, and face counts.
+colors each discovered part on a cleaned, smoothed proxy, and writes a JSON
+legend containing stable part IDs, colors, and face counts.
 
 The inference flow follows PartSAM's MIT-licensed ``eval_everypart.py`` while
 avoiding its optional Open3D and Apex dependencies and its hard-coded folders.
@@ -192,8 +192,37 @@ def _sample_surface_with_color(mesh, count: int, seed: int):
     return points.astype(np.float32), face_index.astype(np.int64), colors
 
 
-def _normalize_for_partsam(mesh, count: int, seed: int, face_target: int):
-    """Match PartSAM's inference normalization and retain its inverse."""
+def _clean_geometry(mesh) -> None:
+    """Remove local triangle defects without discarding valid disconnected car parts."""
+    mesh.update_faces(mesh.nondegenerate_faces())
+    mesh.update_faces(mesh.unique_faces())
+    mesh.remove_unreferenced_vertices()
+    if len(mesh.vertices) == 0 or len(mesh.faces) == 0:
+        raise ValueError("Geometry cleanup removed every triangle")
+
+
+def _transfer_surface_colors(
+    source_points: np.ndarray,
+    source_colors: np.ndarray,
+    target_points: np.ndarray,
+) -> np.ndarray:
+    """Transfer baked texture samples onto a remeshed/smoothed proxy."""
+    from scipy.spatial import cKDTree
+
+    nearest = cKDTree(source_points).query(target_points, k=1)[1]
+    return source_colors[nearest]
+
+
+def _normalize_for_partsam(
+    mesh,
+    count: int,
+    seed: int,
+    face_target: int,
+    smooth_iterations: int,
+    smooth_lambda: float,
+    smooth_nu: float,
+):
+    """Build PartSAM's cleaned proxy, normalize it, and retain the inverse."""
     import trimesh
 
     original_vertices = np.asarray(mesh.vertices, dtype=np.float64).copy()
@@ -206,17 +235,37 @@ def _normalize_for_partsam(mesh, count: int, seed: int, face_target: int):
 
     sampled_mesh = mesh.copy()
     sampled_mesh.vertices = (original_vertices - original_center) * original_scale
-    points, sampled_faces, colors = _sample_surface_with_color(sampled_mesh, count, seed)
-    normals = np.asarray(sampled_mesh.face_normals)[sampled_faces].astype(np.float32)
+    texture_points, _, texture_colors = _sample_surface_with_color(sampled_mesh, count, seed)
 
     geometry = trimesh.Trimesh(
         vertices=np.asarray(sampled_mesh.vertices).copy(),
         faces=np.asarray(sampled_mesh.faces).copy(),
         process=False,
     )
+    _clean_geometry(geometry)
     if len(geometry.faces) > face_target:
-        print(f"Decimating highlighted copy: {len(geometry.faces):,} -> {face_target:,} faces")
+        print(f"Decimating PartSAM proxy: {len(geometry.faces):,} -> {face_target:,} faces")
         geometry = geometry.simplify_quadric_decimation(face_count=face_target)
+        _clean_geometry(geometry)
+
+    if smooth_iterations > 0:
+        print(
+            f"Taubin smoothing PartSAM proxy: {smooth_iterations} iterations "
+            f"(lambda={smooth_lambda}, nu={smooth_nu})"
+        )
+        trimesh.smoothing.filter_taubin(
+            geometry,
+            lamb=smooth_lambda,
+            nu=smooth_nu,
+            iterations=smooth_iterations,
+        )
+
+    # PartSAM now observes the cleaned proxy's coordinates and normals. Transfer
+    # colors from dense samples of the untouched textured surface so simplification
+    # and smoothing do not discard the texture feature used by the model.
+    points, sampled_faces, _ = _sample_surface_with_color(geometry, count, seed)
+    colors = _transfer_surface_colors(texture_points, texture_colors, points)
+    normals = np.asarray(geometry.face_normals)[sampled_faces].astype(np.float32)
 
     sample_shift = (points.min(axis=0) + points.max(axis=0)) * 0.5
     points = points - sample_shift
@@ -368,6 +417,9 @@ def run(args: argparse.Namespace) -> dict[str, str]:
         count=args.num_points,
         seed=args.seed,
         face_target=args.face_target,
+        smooth_iterations=args.smooth_iterations,
+        smooth_lambda=args.smooth_lambda,
+        smooth_nu=args.smooth_nu,
     )
 
     print("Loading PartSAM checkpoint...")
@@ -421,7 +473,7 @@ def run(args: argparse.Namespace) -> dict[str, str]:
     if len(masks) == 0:
         raise RuntimeError(
             "PartSAM found no masks above the IoU threshold; lower --iou-threshold "
-            "(for example, from 0.65 to 0.55)."
+            "(for example, from 0.75 to 0.65)."
         )
     print(f"Masks after score threshold: {len(masks)}")
     kept = nms(masks, scores, threshold=args.nms_threshold)
@@ -456,7 +508,13 @@ def run(args: argparse.Namespace) -> dict[str, str]:
             "fps_prompts": args.fps_prompts,
             "iou_threshold": args.iou_threshold,
             "nms_threshold": args.nms_threshold,
+            "min_part_fraction": args.min_part_fraction,
             "face_target": args.face_target,
+            "face_neighbors": args.face_neighbors,
+            "smooth_iterations": args.smooth_iterations,
+            "smooth_lambda": args.smooth_lambda,
+            "smooth_nu": args.smooth_nu,
+            "graph_cut": args.graph_cut,
         },
     )
 
@@ -476,13 +534,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--partsam-revision", default="unknown")
     parser.add_argument("--seed", type=int, default=83)
     parser.add_argument("--num-points", type=int, default=100_000)
-    parser.add_argument("--fps-prompts", type=int, default=512)
+    parser.add_argument("--fps-prompts", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--iou-threshold", type=float, default=0.65)
-    parser.add_argument("--nms-threshold", type=float, default=0.30)
-    parser.add_argument("--min-part-fraction", type=float, default=0.002)
-    parser.add_argument("--face-target", type=int, default=100_000)
-    parser.add_argument("--face-neighbors", type=int, default=3)
+    parser.add_argument("--iou-threshold", type=float, default=0.75)
+    parser.add_argument("--nms-threshold", type=float, default=0.15)
+    parser.add_argument("--min-part-fraction", type=float, default=0.01)
+    parser.add_argument("--face-target", type=int, default=75_000)
+    parser.add_argument("--face-neighbors", type=int, default=7)
+    parser.add_argument("--smooth-iterations", type=int, default=4)
+    parser.add_argument("--smooth-lambda", type=float, default=0.5)
+    parser.add_argument("--smooth-nu", type=float, default=0.5)
     parser.add_argument("--graph-cut", action="store_true")
     return parser
 
@@ -495,6 +556,14 @@ def main() -> None:
         raise ValueError("--fps-prompts cannot exceed --num-points")
     if args.face_target < 1000:
         raise ValueError("--face-target must be at least 1000")
+    if args.face_neighbors < 1:
+        raise ValueError("--face-neighbors must be positive")
+    if args.smooth_iterations < 0:
+        raise ValueError("--smooth-iterations cannot be negative")
+    if not 0.0 < args.smooth_lambda <= 1.0 or not 0.0 < args.smooth_nu <= 1.0:
+        raise ValueError("--smooth-lambda and --smooth-nu must be in the range (0, 1]")
+    if args.graph_cut and args.face_target > 50_000:
+        raise ValueError("--face-target must be at most 50000 when --graph-cut is enabled")
     run(args)
 
 
