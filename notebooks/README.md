@@ -1,12 +1,15 @@
-# TRELLIS.2 Multi-Image → 3D on Google Colab (A100)
+# TRELLIS.2 Seven-View vs Single-Image Demo on Google Colab (A100)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
 
-Turn **multiple photos of the same object** (different angles, no camera poses needed) into a
-**textured GLB + turntable video**, using this fork's
-[`run_multi_image()`](../trellis2/pipelines/trellis2_image_to_3d.py) pipeline on a Colab A100.
-The notebook can then run [PartSAM](https://github.com/czvvd/PartSAM) to produce a second GLB
-whose discovered parts are highlighted with distinct colors.
+Generate two **textured GLBs + turntable videos** of the same object for a direct comparison:
+
+1. A seven-view run covering front-left, left, back-left, back, back-right, right, and
+   front-right with this fork's
+   [`run_multi_image()`](../trellis2/pipelines/trellis2_image_to_3d.py).
+2. A single-image run using the held-out straight-on front image and the native `run()` method.
+
+Neither path needs camera poses.
 
 ## Prerequisites
 
@@ -34,62 +37,43 @@ whose discovered parts are highlighted with distinct colors.
 3. **First session only:** cell 6 downloads the matching official FlashAttention wheel, installs
    Eigen headers, then compiles nvdiffrast, nvdiffrec, CuMesh, FlexGEMM, and o-voxel at pinned revisions. Each wheel
    is cached immediately to `Drive/TRELLIS2_cache/wheels/`; rerunning after a disconnect resumes
-   from the remaining package. Cell 7a also builds PartSAM's pinned `torkit3d` dependency when
-   `RUN_PARTSAM` is enabled; if that optional build fails, the integration uses a slower
-   pure-PyTorch fallback. Later sessions install successful builds from the cache in a few minutes.
-4. In cell 8, upload **2–4 views of the same object** (or point `DRIVE_FOLDER` at a folder of
-   images on your Drive).
-5. Run cells 9–12: the pipeline loads once, generates the mesh, renders a turntable preview
-   inline, and exports `trellis2_multiview.glb`. Results are also copied to
-   `Drive/TRELLIS2_outputs/`.
-6. Run cell 13 to export `trellis2_multiview_parts.glb`, a PLY copy, and a JSON color legend.
+   from the remaining package. Later sessions install successful builds from the cache in a few
+   minutes.
+4. In cell 8, upload exactly **seven non-front views** (or point
+   `MULTIVIEW_DRIVE_FOLDER` at a folder containing them).
+5. Run cells 9–12 to create `trellis2_7view.glb` and its turntable.
+6. In cell 13, upload the held-out straight-on front image. Run cells 14–16 to create
+   `trellis2_single_front.glb` and its turntable.
+7. Both pairs of results are copied to `Drive/TRELLIS2_outputs/`.
 
-## Part highlighting with PartSAM
+To rerun a demo, rerun cells 8–12 (seven-view) or 13–16 (single image). The pipeline stays
+loaded. Cells 12 and 16 park their finished mesh on CPU so the other demo gets a clean GPU;
+rerunning the matching render or export cell moves it back automatically, so regeneration is
+only needed when an input or generation parameter changes.
 
-PartSAM's `every-part` inference discovers coherent part instances from the generated 3D
-surface. On a well-reconstructed car, those regions can correspond to doors, windows, hood,
-headlights, mirrors, wheels, and body panels. However, PartSAM is **not a semantic classifier**:
-it does not know that a particular region is a door or headlight. The generated legend therefore
-records stable part IDs, colors, face counts, and coverage—not component names.
-
-The original one-million-face textured asset is never modified. Cell 13 builds a separate,
-cleaned 75,000-face proxy, applies four mild Taubin-smoothing passes, transfers samples of the
-original texture onto that proxy, and runs PartSAM on the smoother coordinates and normals. The
-highlighted GLB is this proxy restored to the original model's scale and position.
-
-| Parameter | Default | Effect |
-|---|---:|---|
-| `PARTSAM_PROMPTS` | `256` | Number of automatic point prompts. Fewer prompts reduce competing tiny masks; raise it only when small components are consistently missed. |
-| `PARTSAM_IOU_THRESHOLD` | `0.75` | Minimum predicted mask score. Lower to `0.65` if no masks survive. |
-| `PARTSAM_NMS_THRESHOLD` | `0.15` | Suppresses overlapping masks. This conservative value keeps fewer competing regions; raise it when legitimate parts disappear. |
-| `PARTSAM_MIN_PART_FRACTION` | `0.01` | Removes tiny noisy islands. Lower to `0.005` if mirrors or headlights disappear. |
-| `PARTSAM_FACE_TARGET` | `75000` | Face count of the highlighted proxy only. It does not reduce the original textured GLB. |
-| `PARTSAM_FACE_NEIGHBORS` | `7` | Number of nearby sampled labels voted onto each proxy face. Raise to `9` for more spatially coherent panels. |
-| `PARTSAM_SMOOTH_ITERATIONS` | `4` | Mild Taubin-smoothing passes before inference. Set to `0` to disable, or `2` if narrow panels start merging. |
-| `PARTSAM_SMOOTH_LAMBDA` / `PARTSAM_SMOOTH_NU` | `0.5` / `0.5` | Taubin smoothing strengths. The defaults smooth faceting without intentionally shrinking the proxy. |
-| `PARTSAM_GRAPH_CUT` | `False` | Enables PartSAM's slower boundary refinement. If enabled, set `PARTSAM_FACE_TARGET` to `50000` or less (`40000` is a good first try). |
-
-Cell 12 now defaults to `EXPORT_REMESH=False`. That selects O-Voxel's standard export path,
+Cells 12 and 16 default to remeshing off. That selects O-Voxel's standard export path,
 which removes duplicate faces, repairs non-manifold edges, drops small connected components,
 fills small holes, and unifies face orientation. Set it to `True` only to test O-Voxel's
 narrow-band dual-contouring remesher; this changes topology and can soften sharp details.
 
-## Generation options (cell 10)
+## Generation options
 
-| Parameter | Values | Notes |
-|---|---|---|
-| `MODE` | `stochastic` (default), `multidiffusion` | `stochastic` conditions each denoising step on a different view — fast, no extra compute. `multidiffusion` averages all views at every step — slower but more stable when views disagree. |
-| `RESOLUTION` | `default`, `512`, `1024`, `1024_cascade`, `1536_cascade` | `default` = the model config (`1024_cascade`). Drop to `512` on OOM. |
-| `SEED` | any int | Same seed + same inputs → same asset. |
-| `PREPROCESS` | on/off | Automatic background removal + recentering. Turn off only if your images already have clean alpha. |
+| Parameter | Cell | Values | Notes |
+|---|---:|---|---|
+| `MODE` | 10 | `stochastic` (default), `multidiffusion` | `stochastic` conditions each denoising step on a different view. `multidiffusion` averages all seven views at every step and is slower. |
+| `RESOLUTION` / `SINGLE_RESOLUTION` | 10 / 14 | `default`, `512`, `1024`, `1024_cascade`, `1536_cascade` | `default` = the model config (`1024_cascade`). Drop to `512` on OOM. |
+| `SEED` / `SINGLE_SEED` | 10 / 14 | any int | Defaults match at `42` for a controlled comparison. |
+| `PREPROCESS` / `SINGLE_PREPROCESS` | 10 / 14 | on/off | Automatic background removal + recentering. Turn off only for clean-alpha inputs. |
 
 ### Choosing good views
 
-- 2–4 images covering different sides (front/side/back) works well; more views than
-  denoising steps (12) get skipped in `stochastic` mode.
+- Use these seven views in cell 8: front-left, left, back-left, back, back-right, right,
+  and front-right. Reserve straight-on front for cell 13.
+- Prefix the seven filenames `01_` through `07_` in that order so the preview is easy to audit.
 - Same object state, similar lighting in each shot — the views are aggregated without poses,
   so contradictory views average into blurry geometry.
-- Any resolution; images are resized internally (≤1024 px).
+- PNG, JPG/JPEG, WebP, HEIC, and HEIF are accepted directly. Images are resized internally
+  (≤1024 px), so iPhone HEIC originals do not need to be converted first.
 
 ## What gets stored where
 
@@ -97,7 +81,7 @@ narrow-band dual-contouring remesher; this changes topology and can soften sharp
 |---|---|---|
 | `Drive/TRELLIS2_cache/wheels/` | CUDA extension wheels + `env_tag.txt` | Yes — next run rebuilds them. Auto-cleared when the torch/CUDA/Python ABI changes. |
 | `Drive/TRELLIS2_cache/hf_home/` | model weights (only if `CACHE_MODELS_ON_DRIVE`) | Yes — re-downloaded on demand. |
-| `Drive/TRELLIS2_outputs/` | textured GLB/MP4 plus PartSAM GLB/PLY/legend outputs | Your call. |
+| `Drive/TRELLIS2_outputs/` | seven-view and single-image GLB/MP4 pairs | Your call. |
 
 ## Troubleshooting
 
@@ -110,11 +94,10 @@ See the table in the notebook's final cell. The two big ones:
   wheel-cache tag.
 - **401/403 downloading models**: you haven't accepted the gated-model licenses, or the
   `HF_TOKEN` secret is missing/not shared with the notebook.
-- **PartSAM finds no masks**: lower `PARTSAM_IOU_THRESHOLD` from `0.75` to `0.65`.
-- **Part segmentation is still fragmented**: try `PARTSAM_FACE_NEIGHBORS=9`; if necessary, set
-  `PARTSAM_GRAPH_CUT=True` and `PARTSAM_FACE_TARGET=40000`.
-- **Small panels merge**: use two smoothing iterations, lower `PARTSAM_MIN_PART_FRACTION` to
-  `0.005`, or raise `PARTSAM_NMS_THRESHOLD` to `0.25`.
+- **Seven-view upload is rejected**: cell 8 deliberately requires exactly seven supported
+  image files. Keep the front image out of that folder/upload and use it in cell 13.
+- **HEIC image is reported as unreadable**: rerun cell 4 to install `pillow-heif`, then rerun
+  cell 7 to register the HEIF decoder before uploading images again.
 
 ## Running outside Colab
 
@@ -123,13 +106,16 @@ repo directly — see [`setup.sh`](../setup.sh) for the environment and
 [`example_multi_image.py`](../example_multi_image.py) for the same workflow as a CLI:
 
 ```bash
-python example_multi_image.py front.png side.png back.png -o outputs --mode stochastic
+python example_multi_image.py \
+  01_front_left.png 02_left.png 03_back_left.png 04_back.png \
+  05_back_right.png 06_right.png 07_front_right.png \
+  -o outputs --name trellis2_7view --mode stochastic
 ```
 
 ## Reproducibility notes
 
 - The notebook pins the Colab runtime contract, FlashAttention 2.8.3 wheel, utils3d commit,
-  PartSAM code/checkpoint, and source revisions for every compiled third-party extension.
+  and source revisions for every compiled third-party extension.
 - Cached wheels are accepted only when PyTorch, its CUDA runtime, nvcc, Python, C++ ABI, and GPU
   architecture match the cache tag.
 - Colab keeps past runtime versions available for a limited period. If 2025.10 is removed from

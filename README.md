@@ -22,13 +22,10 @@ view predictions at each step (`multidiffusion`).
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
 
-The [A100 Colab guide](notebooks/README.md) covers the pinned runtime, Hugging Face access,
-compiled-extension caching, inputs, outputs, and troubleshooting. It also includes an optional
-[PartSAM](https://github.com/czvvd/PartSAM) post-process that exports a color-highlighted part
-mesh and JSON legend while preserving the original textured GLB. Its cleaner default preset runs
-segmentation on a decimated, topology-cleaned, mildly smoothed proxy to reduce fragmented panels.
-PartSAM discovers unlabeled part regions; it does not automatically name them as doors, windows,
-headlights, and so on.
+The [A100 Colab guide](notebooks/README.md) covers a controlled demo comparing a seven-view
+run (all 45° side/diagonal views except straight-on front) with a native single-image run using
+the held-out front view. It also covers the pinned runtime, Hugging Face access,
+compiled-extension caching, outputs, and troubleshooting.
 
 For an existing CUDA setup, use the CLI directly:
 
