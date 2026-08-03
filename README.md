@@ -22,10 +22,10 @@ view predictions at each step (`multidiffusion`).
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TylerOlszewski/TRELLIS.2/blob/main/notebooks/TRELLIS2_MultiImage_Colab_A100.ipynb)
 
-The [A100 Colab guide](notebooks/README.md) covers a controlled demo comparing a seven-view
-run (all 45° side/diagonal views except straight-on front) with a native single-image run using
-the held-out front view. It also covers the pinned runtime, Hugging Face access,
-compiled-extension caching, outputs, and troubleshooting.
+The [A100 Colab guide](notebooks/README.md) accepts any positive number of input views, recommends
+four well-spaced views as a starting point, and includes an optional native single-image comparison.
+It also covers the pinned runtime, Hugging Face access, compiled-extension caching, outputs, and
+troubleshooting.
 
 For an existing CUDA setup, use the CLI directly:
 
