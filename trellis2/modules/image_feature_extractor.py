@@ -1,4 +1,5 @@
 from typing import *
+import os
 import torch
 import torch.nn.functional as F
 from torchvision import transforms
@@ -62,7 +63,12 @@ class DinoV3FeatureExtractor:
     """
     def __init__(self, model_name: str, image_size=512):
         self.model_name = model_name
-        self.model = DINOv3ViTModel.from_pretrained(model_name)
+        # DINOv3 is gated. Pass the token explicitly instead of depending on
+        # cached-login discovery inside Transformers.
+        self.model = DINOv3ViTModel.from_pretrained(
+            model_name,
+            token=os.environ.get("HF_TOKEN"),
+        )
         self.model.eval()
         self.image_size = image_size
         self.transform = transforms.Compose([

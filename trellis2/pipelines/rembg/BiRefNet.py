@@ -1,4 +1,5 @@
 from typing import *
+import os
 from transformers import AutoModelForImageSegmentation
 import torch
 from torchvision import transforms
@@ -8,7 +9,9 @@ from PIL import Image
 class BiRefNet:
     def __init__(self, model_name: str = "ZhengPeng7/BiRefNet"):
         self.model = AutoModelForImageSegmentation.from_pretrained(
-            model_name, trust_remote_code=True
+            model_name,
+            trust_remote_code=True,
+            token=os.environ.get("HF_TOKEN"),
         )
         self.model.eval()
         self.transform_image = transforms.Compose(
@@ -39,4 +42,3 @@ class BiRefNet:
         mask = pred_pil.resize(image_size)
         image.putalpha(mask)
         return image
-    

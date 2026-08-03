@@ -201,6 +201,10 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Optional local PartSAM checkout. The Colab notebook's part-highlighting stage is
+# currently removed, but this external repo is never vendored here.
+/PartSAM/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
